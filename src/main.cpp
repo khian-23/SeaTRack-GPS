@@ -3,57 +3,73 @@
 #include <TinyGPS++.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
-#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 
 // ================= WIFI =================
-#define WIFI_SSID "vivo Y16"
-#define WIFI_PASSWORD "12345678"
+#define WIFI_SSID "RENTILLOBH2024"
+#define WIFI_PASSWORD "IKAWBAHALA3000"
 
-// ================= FIREBASE (HTTP REST) =================
-#define FIREBASE_HOST "http://seatrack-e6acd-default-rtdb.asia-southeast1.firebasedatabase.app"
+// ================= FIREBASE =================
+#define FIREBASE_URL "https://seatrack-e6acd-default-rtdb.asia-southeast1.firebasedatabase.app/gps.json"
+
+// ================= BOAT INFO =================
+#define BOAT_NAME "FB Toto Christian12"
+#define BOAT_OWNER "Flores Aila Mae"
 
 // ================= GPS =================
-SoftwareSerial gpsSerial(D2, D1); // RX, TX
+SoftwareSerial gpsSerial(D2, D1);
 TinyGPSPlus gps;
 
 // Timing
 unsigned long lastSend = 0;
-const unsigned long interval = 5000;
+const unsigned long interval = 10000; // 🔥 10 seconds
 
-// ================= SEND TO FIREBASE =================
-void sendToFirebase(float lat, float lng, int sats)
+// ================= SEND FUNCTION =================
+void sendToFirebase(float lat, float lng, int sats, float speed)
 {
-  WiFiClient client;
+  WiFiClientSecure client;
+  client.setInsecure();
+
   HTTPClient http;
 
-  String url = String(FIREBASE_HOST) + "/gps.json";
+  Serial.println("Connecting to Firebase...");
 
-  http.begin(client, url);
-  http.addHeader("Content-Type", "application/json");
-
-  String json = "{";
-  json += "\"latitude\":" + String(lat, 6) + ",";
-  json += "\"longitude\":" + String(lng, 6) + ",";
-  json += "\"satellites\":" + String(sats);
-  json += "}";
-
-  int httpResponseCode = http.PUT(json);
-
-  if (httpResponseCode > 0)
+  if (http.begin(client, FIREBASE_URL))
   {
-    Serial.print("HTTP Response: ");
-    Serial.println(httpResponseCode);
-    Serial.println("Firebase update SUCCESS ✅");
+    http.addHeader("Content-Type", "application/json");
+
+    // 🔥 JSON DATA
+    String json = "{";
+    json += "\"latitude\":" + String(lat, 6) + ",";
+    json += "\"longitude\":" + String(lng, 6) + ",";
+    json += "\"satellites\":" + String(sats) + ",";
+    json += "\"speed_kmh\":" + String(speed, 2) + ",";
+    json += "\"boat_name\":\"" + String(BOAT_NAME) + "\",";
+    json += "\"owner\":\"" + String(BOAT_OWNER) + "\"";
+    json += "}";
+
+    int httpCode = http.PUT(json);
+
+    if (httpCode > 0)
+    {
+      Serial.print("HTTP OK: ");
+      Serial.println(httpCode);
+    }
+    else
+    {
+      Serial.print("HTTP FAILED: ");
+      Serial.println(http.errorToString(httpCode));
+    }
+
+    http.end();
   }
   else
   {
-    Serial.print("HTTP ERROR ❌: ");
-    Serial.println(httpResponseCode);
+    Serial.println("HTTP begin FAILED");
   }
-
-  http.end();
 }
 
+// ================= SETUP =================
 void setup()
 {
   Serial.begin(9600);
@@ -61,7 +77,6 @@ void setup()
 
   Serial.println("\nStarting system...");
 
-  // ========= WIFI =========
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to WiFi");
 
@@ -72,29 +87,34 @@ void setup()
   }
 
   Serial.println("\nWiFi Connected!");
-  Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
-
-  // Internet test
-  WiFiClient testClient;
-  if (testClient.connect("google.com", 80))
-  {
-    Serial.println("Internet OK ✅");
-  }
-  else
-  {
-    Serial.println("No Internet ❌");
-  }
 }
 
+// ================= LOOP =================
 void loop()
 {
+  // Always read GPS
   while (gpsSerial.available())
   {
     gps.encode(gpsSerial.read());
   }
 
-  if (gps.location.isValid())
+  // Debug
+  static unsigned long lastDebug = 0;
+  if (millis() - lastDebug > 2000)
+  {
+    lastDebug = millis();
+
+    Serial.println("\n--- GPS DEBUG ---");
+    Serial.print("Satellites: ");
+    Serial.println(gps.satellites.value());
+
+    Serial.print("Location valid: ");
+    Serial.println(gps.location.isValid() ? "YES" : "NO");
+  }
+
+  // Send condition
+  if (gps.location.isValid() && gps.satellites.value() > 3)
   {
     if (millis() - lastSend > interval)
     {
@@ -103,24 +123,21 @@ void loop()
       float lat = gps.location.lat();
       float lng = gps.location.lng();
       int sats = gps.satellites.value();
+      float speed = gps.speed.kmph(); // 🔥 NEW
 
       Serial.println("\n===== GPS DATA =====");
       Serial.print("Lat: ");
       Serial.println(lat, 6);
       Serial.print("Lng: ");
       Serial.println(lng, 6);
+      Serial.print("Speed (km/h): ");
+      Serial.println(speed);
       Serial.print("Satellites: ");
       Serial.println(sats);
 
-      // 🔥 SEND USING HTTP (WORKS ON HOTSPOT)
-      sendToFirebase(lat, lng, sats);
+      sendToFirebase(lat, lng, sats, speed);
 
       Serial.println("====================");
     }
-  }
-  else
-  {
-    Serial.println("Waiting for GPS fix...");
-    delay(2000);
   }
 }
